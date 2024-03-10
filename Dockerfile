@@ -1,5 +1,7 @@
-#Dockerfile for SQLite bank API
-#Version 1.0.0
+#dockerfile authored by: zeh & tutoC
+#date: 10-03-2024
+#version: 1.0.1
+
 ARG BUILDER_IMAGE="ubuntu:22.04"
 
 FROM ${BUILDER_IMAGE} as builder
@@ -36,6 +38,3 @@ RUN clang-15 -O2 -o main main.c -lsqlite3 -lcjson -lmicrohttpd
 #Docker instruction for running container
 CMD ["/app/main"]
 
-#dockerfile authored by: zeh & tutoC
-#date: 10-03-2024
-#version: 1.0.1

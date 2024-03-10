@@ -1,3 +1,7 @@
+#docker-compose.yml   #author: zeh sobrinho & tutorC
+#date: 10-03-24
+#vesão: 1.0.1 
+
 version: "3.5"
 
 volumes:
@@ -56,6 +60,3 @@ networks:
     driver: bridge
     name: rinha_backend_2024_q1
 
-#docker-compose.yml   #author: zeh sobrinho & tutorC
-#date: 10-03-24
-#vesão: 1.0.1 
