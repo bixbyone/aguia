@@ -55,3 +55,7 @@ networks:
   default: 
     driver: bridge
     name: rinha_backend_2024_q1
+
+#vesão: 1.0.1 
+#author: zeh sobrinho & tutorC
+#data: 10/03/24
