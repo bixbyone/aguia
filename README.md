@@ -1,6 +1,27 @@
-# Rinha de Backend - Q1 de 2024
+# tutorC
 
-## Resultados (Ubuntu WSL)
+Simulação de uma API de créditos/débitos para teste de carga
 
-![Captura de tela 2024-02-27 132050](https://github.com/rodrigocaldeira/rinha_backend_2024_q1_c/assets/2973276/020c7444-be3c-4a6e-87ba-f4f4960396d5)
+Data: 10/03/2024
+Versão: 1.0.0
+Autores; Zeh Sobrinho & TutorC
 
+## Funcionalidades
+
+- Cadastro de clientes
+- Efetuação de transações (créditos/débitos)
+- Consulta de extrato
+
+## Subir
+
+- docker-compose up -d
+
+## Próximos passos
+
+- Implementar MVCC no banco de dados
+- Melhorar consistência entre simulações
+- DeepAuto-Scale vertical e horizontal
+
+## Ombros gigantes
+
+- @rodrigocaldeira

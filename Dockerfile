@@ -5,7 +5,7 @@ ARG BUILDER_IMAGE="ubuntu:22.04"
 FROM ${BUILDER_IMAGE} as builder
 
 #Install build dependencies
-RUN apt-get update && apt-get -y --no-install-recommends install
+RUN apt-get update && apt-get -y --no-install-recommends install\
 build-essential \
 
 #Clang compiler
@@ -18,8 +18,8 @@ libsqlite3-dev \
 libcjson-dev \
 
 #MicroHTTP library
-libmicrohttpd-dev
-&& apt-get clean
+libmicrohttpd-dev\
+&& apt-get clean\
 && rm -rf /var/lib/apt/lists/*
 
 #Specify include paths for SQLite, JSON and MicroHTTP
