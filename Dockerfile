@@ -36,5 +36,6 @@ RUN clang-15 -O2 -o main main.c -lsqlite3 -lcjson -lmicrohttpd
 #Docker instruction for running container
 CMD ["/app/main"]
 
-#Dockerfile authored by: Zeh & TutoC
-#Date: 10-03-2024
+#dockerfile authored by: zeh & tutoC
+#date: 10-03-2024
+#version: 1.0.1
