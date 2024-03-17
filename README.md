@@ -1,6 +1,6 @@
-# tutorC
+# pena
 
-Simulação de uma API de créditos/débitos para teste de carga
+Simulação de uma API de créditos/débitos para teste de carga in bash usando lib codorna_lib.h
 
 Data: 10/03/2024
 Versão: 1.0.0
