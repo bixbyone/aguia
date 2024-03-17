@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <libpq-fe.h>
 #include <microhttpd.h>
 #include <regex.h>
 #include <time.h>
@@ -14,17 +13,6 @@ int port;
 int pool_size;
 struct MHD_Daemon *main_daemon;
 
-typedef struct {
-  PGconn *conn;
-  int em_uso;
-  pthread_mutex_t lock;
-} _connection;
-
-typedef struct {
-  _connection **connections;
-  int conn_index;
-  pthread_mutex_t lock;
-} _pool;
 
 typedef struct {
   char valor[11];
@@ -46,112 +34,43 @@ struct post_status {
   char data[1024];
 };
 
-_pool pool;
+ struct MutexPool {
+  pthread_mutex_t *mutexes;
+  int num_mutexes;  
+};
 
-int create_pool(char *connection_string) {
-  printf("Creating the connection pool of size %d\n", pool_size);
-  fflush(stdout);
+void create_mutex_pool(struct MutexPool *pool, int pool_size) {
 
-  pool.connections = malloc(pool_size * sizeof(_connection *));
-  pthread_mutex_init(&pool.lock, NULL);
-  pool.conn_index = 0;
+  pool->mutexes = malloc(pool_size * sizeof(pthread_mutex_t));
 
-  for (int i = 0; i < pool_size; i++) {
-    pool.connections[i] = (_connection *)calloc(1, sizeof(_connection));
-    pool.connections[i] -> conn = PQconnectdb(connection_string);
-    int j = 1;
-    while (PQstatus(pool.connections[i] -> conn) != CONNECTION_OK) {
-      fprintf(stderr, "Failed to connect to the database: %s. Attempt %d\n", PQerrorMessage(pool.connections[i] -> conn), j);
-      sleep(j);
-      pool.connections[i] -> conn = PQconnectdb(connection_string);
-      j++;
-      if (j == 10) {
-        fprintf(stderr, "Failed to connect to the database after 10 attempts\n");
-        return 1;
-      }
-    }
-    pool.connections[i] -> em_uso = 0;
-    pthread_mutex_init(&pool.connections[i] -> lock, NULL);
-    printf("Connection %d created\n", i);
+  pthread_mutex_init(&pool->lock, NULL);
+
+  pool->num_mutexes = 0;
+
+  for(int i=0; i<pool_size; i++) {
+
+    pthread_mutex_init(&pool->mutexes[i], NULL);
+
+    printf("Mutex %d created\n", i);
+
   }
 
-  return 0;
 }
 
-PGconn *get_connection() {
+pthread_mutex_t* get_mutex() {
+
   pthread_mutex_lock(&pool.lock);
-  PGconn *pg_conn = NULL;
-  while (pg_conn == NULL) {
-    while (pool.connections[pool.conn_index] -> em_uso) {
-      pool.conn_index++;
-      if (pool.conn_index == pool_size) {
-        pool.conn_index = 0;
-      }
-    }
-    
-    if (PQstatus(pool.connections[pool.conn_index] -> conn) != CONNECTION_OK) {
-      fprintf(stderr, "The connection is not OK: %s\n", PQerrorMessage(pool.connections[pool.conn_index] -> conn));
 
-      PQreset(pool.connections[pool.conn_index] -> conn);
-    }
+  pthread_mutex_t* mutex = &pool->mutexes[pool->num_mutexes];
 
-    pthread_mutex_lock(&pool.connections[pool.conn_index] -> lock);
-    pool.connections[pool.conn_index] -> em_uso = 1;
-    pg_conn = pool.connections[pool.conn_index] -> conn;
-    pool.conn_index++;
-    if (pool.conn_index == pool_size) {
-      pool.conn_index = 0;
-    }
-  }
+  pool->num_mutexes++;
+
   pthread_mutex_unlock(&pool.lock);
-  return pg_conn;
+
+  return mutex;
+
 }
 
-void release_connection(PGconn *conn) {
-  pthread_mutex_lock(&pool.lock);
-  for (int i = 0; i < pool_size; i++) {
-    if (pool.connections[i] -> conn == conn) {
-      pool.connections[i] -> em_uso = 0;
-      pthread_mutex_unlock(&pool.connections[i] -> lock);
-      break;
-    }
-  }
-  pthread_mutex_unlock(&pool.lock);
-}
-
-void close_pool() {
-  printf("Closing the connection pool\n");
-  fflush(stdout);
-  for (int i = 0; i < pool_size; i++) {
-    PQfinish(pool.connections[i] -> conn);
-    pthread_mutex_destroy(&pool.connections[i] -> lock);
-  }
-  pthread_mutex_destroy(&pool.lock);
-}
-
-void begin_transaction(PGconn *pg_conn) {
-  PQexec(pg_conn, "begin");
-}
-
-void commit_transaction(PGconn *pg_conn) {
-  PQexec(pg_conn, "commit");
-}
-
-void rollback_transaction(PGconn *pg_conn) {
-  PQexec(pg_conn, "rollback");
-}
-
-int send_response(struct MHD_Connection *connection, const char *response, int http_code, int free_response) {
-  enum MHD_ResponseMemoryMode mode = free_response ? MHD_RESPMEM_MUST_FREE : MHD_RESPMEM_PERSISTENT;
-  struct MHD_Response *mhd_response = MHD_create_response_from_buffer(strlen(response), (void *)response, mode);
-
-  MHD_add_response_header(mhd_response, "Content-Type", "application/json");
-
-  int ret = MHD_queue_response(connection, http_code, mhd_response);
-  MHD_destroy_response(mhd_response);
-
-  return ret;
-}
 
 void now(char *dt) {
   time_t t = time(NULL);
@@ -229,13 +148,6 @@ void monta_ultimas_transacoes(transacao transacoes_array[10], char *ultimas_tran
   cJSON_Delete(json);
 }
 
-void get_cliente_id(char *id, const char *url, char *regex_expression) {
-    regex_t regex;
-    int reti = regcomp(&regex, regex_expression, REG_EXTENDED | REG_ICASE | REG_STARTEND);
-    if (reti) {
-      return;
-    }
-
     regmatch_t matches[2];
     reti = regexec(&regex, url, 2, matches, 0);
 
@@ -249,31 +161,6 @@ void get_cliente_id(char *id, const char *url, char *regex_expression) {
     }
 
     regfree(&regex);
-}
-
-int _get_cliente(cliente *c, char *id, char *query, PGconn *pg_conn) {
-  PGresult *res = PQexec(pg_conn, query);
-  if (PQresultStatus(res) != PGRES_TUPLES_OK) {
-    fprintf(stderr, "Failed to execute the query: %s\n", PQerrorMessage(pg_conn));
-    PQclear(res);
-    release_connection(pg_conn);
-    return -2;
-  }
-
-  if (PQntuples(res) == 0) {
-    PQclear(res);
-    release_connection(pg_conn);
-    return -3;
-  }
-
-  char *transacoes = PQgetvalue(res, 0, 2);
-
-  monta_ultimas_transacoes(c -> ultimas_transacoes, transacoes);
-  strncpy(c -> id, id, 2);
-  c -> saldo = atoi(PQgetvalue(res, 0, 0));
-  c -> limite = atoi(PQgetvalue(res, 0, 1));
-  PQclear(res);
-  return 0;
 }
 
 int get_cliente_for_update(cliente *c, char *id, PGconn *pg_conn) {
@@ -508,104 +395,110 @@ enum MHD_Result handle_request(void *cls, struct MHD_Connection *connection, con
         }
 
         cliente *c = inicia_cliente();
+void handle_request(struct MHD_Connection *connection) {
 
-        PGconn *pg_conn = get_connection();
-        begin_transaction(pg_conn);
+  char id[2];
+  char *method = get_request_method(); 
+  
+  if(strcmp(method, "POST") == 0) {
 
-        switch (get_cliente_for_update(c, id, pg_conn)) {
-          case 0: 
-            {
-              switch (salva_cliente(c, t, pg_conn)) {
-                case -1:
-                  {
-                    free(c);
-                    return send_response(connection, "{\"error\": \"Insufficient funds\"}", 422, 0);
-                  }
-                case 0:
-                  {
-                    free(c);
-                    return send_response(connection, "{\"error\": \"Failed to save the client\"}", 500, 0);
-                  }
-                case 1:
-                  {
-                    char *response = (char *)calloc(1, 2000);
-                    sprintf(response, "{\"limite\": %d,\"saldo\": %d}", c -> limite, c -> saldo);
-                    free(c);
-                    return send_response(connection, response, 200, 1);
-                  }
-              }
-            }
-          case -1:
-            {
-              free(c);
-              return send_response(connection, "{\"error\": \"Failed to connect to the database\"}", 500, 0);
-            }
-
-          case -2:
-            {
-              free(c);
-              rollback_transaction(pg_conn);
-              return send_response(connection, "{\"error\": \"Failed to execute the query\"}", 500, 0);
-            }
-
-          case -3:
-            {
-              free(c);
-              rollback_transaction(pg_conn);
-              return send_response(connection, "{\"error\": \"Client not found\"}", 404, 0);
-            }
-        }
-      }
+    get_cliente_id(id, url);
+  
+    cliente *c = get_cliente_from_memory(id);
+  
+    if(!c) {
+      return send_error("Cliente não encontrado");
     }
-    return MHD_NO;
-  } 
 
-  if (strcmp(method, "GET") == 0) {
-    printf("%s %s\n", method, url);
-
-    char id[2] = "0";
-    get_cliente_id(id, url, "\\/clientes\\/([0-9]+)\\/extrato");
-
-    if (strcmp(id, "0") == 0) {
-      return send_response(connection, "{\"error\": \"Invalid URL\"}", 400, 0);
+    transacao t;
+    parse_request_body(&t);
+  
+    pthread_mutex_lock(&mem_lock);
+  
+    switch(process_transaction_in_memory(c, t)) {
+    
+      case SUCCESS:
+      
+        send_success_response(c);
+       
+      case INSUFFICIENT_FUNDS:
+      
+        send_error("Saldo insuficiente");
+        
+      // outros casos
+      
     }
+    
+    pthread_mutex_unlock(&mem_lock);
+    
+  } else if(strcmp(method, "GET") == 0){
+  
+    get_cliente_id(id, url);
+  
+    cliente *c = get_cliente_from_memory(id);
+  
+    if(!c) {
+      return send_error("Cliente não encontrado"); 
+    }
+
+    send_cliente_data_response(c);
+
+  }
+
+}
 
     cliente *c = inicia_cliente();
 
-    switch (get_cliente(c, id)) {
-      case 0: 
-      {
-        char data_extrato[28];
-        now(data_extrato);
+   void handle_request(struct MHD_Connection *connection) {
 
-        char *response = (char *)calloc(1, 2000);
+  char id[2];
+  char *method = get_request_method(); 
+  
+  if(strcmp(method, "POST") == 0) {
 
-        char transacoes[2000];
-        serializa_ultimas_transacoes(transacoes, c);
-
-        sprintf(response, "{\"saldo\":{\"total\":%d,\"limite\":%d,\"data_extrato\":\"%s\"},\"ultimas_transacoes\":%s}", c->saldo, c->limite, data_extrato, transacoes);
-
-        free(c);
-
-        return send_response(connection, response, 200, 1);
-      }
-      case -1:
-      {
-        return send_response(connection, "{\"error\": \"Failed to connect to the database\"}", 500, 0);
-      }
-
-      case -2:
-      {
-        return send_response(connection, "{\"error\": \"Failed to execute the query\"}", 500, 0);
-      }
-
-      case -3:
-      {
-        return send_response(connection, "{\"error\": \"Client not found\"}", 404, 0);
-      }
+    get_cliente_id(id, url);
+  
+    cliente *c = get_cliente_from_memory(id);
+  
+    if(!c) {
+      return send_error("Cliente não encontrado");
     }
+
+    transacao t;
+    parse_request_body(&t);
+  
+    pthread_mutex_lock(&mem_lock);
+  
+    switch(process_transaction_in_memory(c, t)) {
+    
+      case SUCCESS:
+      
+        send_success_response(c);
+       
+      case INSUFFICIENT_FUNDS:
+      
+        send_error("Saldo insuficiente");
+        
+      // outros casos
+      
+    }
+    
+    pthread_mutex_unlock(&mem_lock);
+    
+  } else if(strcmp(method, "GET") == 0){
+  
+    get_cliente_id(id, url);
+  
+    cliente *c = get_cliente_from_memory(id);
+  
+    if(!c) {
+      return send_error("Cliente não encontrado"); 
+    }
+
+    send_cliente_data_response(c);
+
   }
-  return send_response(connection, "{\"error\": \"Invalid Request\"}", 400, 0);
+
 }
 
 void sighandler(int signum) {
@@ -626,33 +519,8 @@ int main() {
     port = atoi(ptr_port);
   }
 
-  char *ptr_pool_size = getenv("POOL_SIZE");
-  if (ptr_pool_size != NULL) {
-    pool_size = atoi(ptr_pool_size);
-  } else {
-    pool_size = 10;
-  }
-
-  char *ptr_thread_pool_size = getenv("THREAD_POOL_SIZE");
-  int thread_pool_size = 2;
-
-  if (ptr_thread_pool_size != NULL) {
-    thread_pool_size = atoi(ptr_thread_pool_size);
-  }
-
-  char *connection_string = getenv("CONNECTION_STRING");
-
-  if (signal(SIGINT, sighandler) == SIG_ERR) {
-    fprintf(stderr, "Failed to set the signal handler\n");
-    return 1;
-  }
-
   if (signal(SIGTERM, sighandler) == SIG_ERR) {
     fprintf(stderr, "Failed to set the signal handler\n");
-    return 1;
-  }
-
-  if (create_pool(connection_string)) {
     return 1;
   }
 
@@ -665,16 +533,8 @@ int main() {
       MHD_OPTION_THREAD_POOL_SIZE, thread_pool_size,
       MHD_OPTION_END);
 
-  if (!main_daemon) {
-    fprintf(stderr, "Failed to start the server\n");
-    return 1;
-  } else {
-    printf("Thread pool size: %d\n", thread_pool_size);
-  }
-
   printf("Server running on port %d.\n", port);
   fflush(stdout);
 
   pause();
 }
-
